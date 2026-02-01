@@ -1,91 +1,113 @@
 ---
-name: jules-cli
-description: "Use the Jules CLI (@google/jules) via exec to create and manage remote Jules coding sessions: login, list repos/sessions, start new sessions, monitor, and pull results. Use when the user asks to delegate coding tasks to Jules or manage Jules remote sessions from the terminal."
+name: jules-api
+description: "Use the Jules REST API (v1alpha) via curl (exec) to list sources, create sessions, monitor activities, approve plans, and retrieve outputs (e.g., PR URLs). Use when the user wants to delegate coding tasks to Jules programmatically without the Jules CLI."
 ---
 
-# Jules CLI (local via exec)
+# Jules REST API (curl via exec)
 
-This skill uses the **Jules Tools CLI** locally via the `exec` tool.
+This skill uses **curl** to talk directly to the **Jules REST API**.
 
-## Prereqs (one-time)
+Docs: https://jules.google/docs/api/reference/
 
-### Install
-Run (works on most Node setups):
+## Prereqs
 
-```bash
-npm install -g @google/jules
-# or
-pnpm add -g @google/jules
-```
+### 1) Get an API key
+Create a Jules API key in the Jules web app:
+- https://jules.google.com/settings#api
 
-Verify:
-```bash
-jules version
-```
-
-### Login (interactive)
-Jules requires Google auth:
+Export it on the machine running Clawdbot:
 
 ```bash
-jules login
+export JULES_API_KEY="..."
 ```
 
-This usually opens a browser window. If running on a headless server, you may need to:
-- open the Control UI + browser tool, or
-- run `jules login` on a machine with a browser.
-
-Logout:
-```bash
-jules logout
-```
-
-## Core commands
-
-### List
-```bash
-# connected repos
-jules remote list --repo
-
-# sessions
-jules remote list --session
-```
-
-### Create a new session (automatic)
-Use the current repo when possible:
+Requests authenticate with:
 
 ```bash
-# from inside a git repo
-jules remote new --repo . --session "<task>"
+-H "x-goog-api-key: $JULES_API_KEY"
 ```
 
-Or specify a repo:
+### 2) Connect your GitHub repo as a Source
+Before the API can operate on a GitHub repo, you must install the **Jules GitHub app** via the Jules web UI for that repo.
+
+## Base URL
+- `https://jules.googleapis.com/v1alpha`
+
+## Core workflow
+
+### A) List Sources (find repo source name)
 ```bash
-jules remote new --repo owner/name --session "<task>"
+curl -sS \
+  -H "x-goog-api-key: $JULES_API_KEY" \
+  "https://jules.googleapis.com/v1alpha/sources"
 ```
 
-Parallel sessions:
+You’re looking for entries like:
+- `name: "sources/github/<owner>/<repo>"`
+
+### B) Create a Session (delegate a task)
 ```bash
-jules remote new --repo . --session "<task>" --parallel 3
+curl -sS "https://jules.googleapis.com/v1alpha/sessions" \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -H "x-goog-api-key: $JULES_API_KEY" \
+  -d '{
+    "prompt": "<TASK>",
+    "title": "<SHORT TITLE>",
+    "sourceContext": {
+      "source": "sources/github/<owner>/<repo>",
+      "githubRepoContext": {
+        "startingBranch": "main"
+      }
+    },
+    "automationMode": "AUTO_CREATE_PR"
+  }'
 ```
 
-### Pull results
+Notes:
+- `automationMode` is optional; omit it if you don’t want auto PR creation.
+- By default, sessions created through the API have plans automatically approved.
+  If you want explicit plan approval, set `requirePlanApproval: true`.
+
+### C) List Sessions (find session id)
 ```bash
-jules remote pull --session <id>
+curl -sS \
+  -H "x-goog-api-key: $JULES_API_KEY" \
+  "https://jules.googleapis.com/v1alpha/sessions?pageSize=20"
 ```
 
-## Recommended Clawdbot workflow
+### D) Monitor a Session (list Activities)
+```bash
+curl -sS \
+  -H "x-goog-api-key: $JULES_API_KEY" \
+  "https://jules.googleapis.com/v1alpha/sessions/SESSION_ID/activities?pageSize=30"
+```
 
-1) Confirm `jules` exists; if not, install it.
-2) Confirm logged in (if not, run `jules login` and ask user to complete auth).
-3) Start session:
-   - prefer `--repo .` if user’s task is about the current project
-   - otherwise ask for `owner/repo`
-4) Poll `jules remote list --session` to find the new session id
-5) When complete, run `jules remote pull --session <id>`
-6) Summarize what changed and ask whether to open a PR / run tests / etc.
+### E) Send a message into a Session
+```bash
+curl -sS \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -H "x-goog-api-key: $JULES_API_KEY" \
+  "https://jules.googleapis.com/v1alpha/sessions/SESSION_ID:sendMessage" \
+  -d '{"prompt": "<MESSAGE>"}'
+```
 
-## Safety / guardrails
-- Always include the **exact task** string provided by the user.
-- Prefer running in a clean git repo state (tell user if there are uncommitted changes).
-- Avoid exposing secrets in session prompts.
+### F) Approve Plan (only if requirePlanApproval=true)
+```bash
+curl -sS \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -H "x-goog-api-key: $JULES_API_KEY" \
+  "https://jules.googleapis.com/v1alpha/sessions/SESSION_ID:approvePlan"
+```
+
+## What to extract for the user
+When a session completes, its `outputs` may include a PR URL:
+- `outputs[].pullRequest.url`
+
+## Implementation guidance for Clawdbot
+- Prefer creating sessions with `automationMode: AUTO_CREATE_PR` so output is a PR.
+- Always ask the user which repo/source to use if ambiguous.
+- Never include secrets in prompts.
 
