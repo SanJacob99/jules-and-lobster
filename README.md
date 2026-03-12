@@ -1,6 +1,6 @@
 # jules-and-lobster
 
-A Claude Code skill for interacting with the **Jules REST API (v1alpha)** — Google's autonomous AI coding agent.
+A ClawBot skill for interacting with the **Jules REST API (v1alpha)** — Google's autonomous AI coding agent.
 
 **Install:** [https://clawhub.ai/SanJacob99/jules-and-lobster](https://clawhub.ai/SanJacob99/jules-and-lobster) | **2,000+ installs**
 
